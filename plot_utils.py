@@ -174,8 +174,14 @@ def plot_cup_and_handle_pattern(data, complete_pattern):
         )
     )
     
-    # Update axes
-    fig.update_xaxes(type='date', tickformat='%H:%M', rangeslider=dict(visible=False))
+    # Update axes with full date and time
+    fig.update_xaxes(
+        type='date', 
+        tickformat='%Y-%m-%d<br>%H:%M',  # Show date on top line, time on bottom line
+        rangeslider=dict(visible=False),
+        tickangle=-45,  # Rotate labels for better readability
+        title_text="Date & Time"
+    )
     fig.update_yaxes(title_text="Price", row=1, col=1)
     fig.update_yaxes(title_text="Volume", row=2, col=1)
     
