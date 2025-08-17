@@ -6,168 +6,180 @@ from scipy.optimize import curve_fit
 import kaleido
 import os
 
-# Import parabola functions from pattern_detector
-from pattern_detector import parabola, fit_parabola_to_cup
+from plotly.subplots import make_subplots
+
+def parabola(x, a, b, c):
+    """Define a parabolic curve (quadratic fit)"""
+    return a * x**2 + b * x + c
 
 # Function to plot and crop the pattern
-def plot_and_crop_pattern(cup_candidate, handle_candidate, breakout_time, pattern_id, full_data, pattern_start_idx, pattern_end_idx):
-    # Add context: show 50 candles before and after the pattern for better visualization
-    context_before = 50
-    context_after = 50
+def plot_cup_and_handle_pattern(data, complete_pattern):
+    """
+    Plot cup and handle pattern only (no breakout analysis)
     
-    start_context_idx = max(0, pattern_start_idx - context_before)
-    end_context_idx = min(len(full_data), pattern_end_idx + context_after)
+    Args:
+        data: Full dataset
+        complete_pattern: Complete pattern dictionary
+    """
     
-    # Get the context data for background
-    context_data = full_data.iloc[start_context_idx:end_context_idx]
+    pattern_id = complete_pattern['pattern_id']
+    cup_pattern = complete_pattern['cup']
+    handle_pattern = complete_pattern['handle']
     
-    # Fit a parabola to the cup for the smooth arc using the improved function
-    r2, popt = fit_parabola_to_cup(cup_candidate)
-    x_data = np.arange(len(cup_candidate))
-    fitted_parabola = parabola(x_data, *popt)
-
-    # Plotting with Plotly for smooth rendering and better control
-    plotly_fig = go.Figure()
-
-    # Plot background context data (lighter colors)
-    plotly_fig.add_trace(go.Candlestick(
+    # Extract data sections
+    cup_start_idx = cup_pattern['cup_start_idx']
+    cup_end_idx = cup_pattern['cup_end_idx']
+    handle_start_idx = handle_pattern['handle_start_idx']
+    handle_end_idx = handle_pattern['handle_end_idx']
+    
+    cup_data = data.iloc[cup_start_idx:cup_end_idx]
+    handle_data = data.iloc[handle_start_idx:handle_end_idx]
+    
+    # Calculate pattern length for centering
+    pattern_length = handle_end_idx - cup_start_idx
+    post_handle_candles = 20  # Show 20 candles after handle ends
+    
+    # Center the pattern by using balanced context
+    context_padding = 20  # At least 20 candles
+    
+    context_start_idx = max(0, cup_start_idx - context_padding)
+    context_end_idx = min(len(data), handle_end_idx + post_handle_candles + context_padding)
+    context_data = data.iloc[context_start_idx:context_end_idx]
+    
+    # Get post-handle data (20 candles after handle ends) for additional visualization
+    post_handle_start_idx = handle_end_idx
+    post_handle_end_idx = min(len(data), handle_end_idx + post_handle_candles)
+    post_handle_data = data.iloc[post_handle_start_idx:post_handle_end_idx] if post_handle_end_idx > post_handle_start_idx else pd.DataFrame()
+    
+    # Create plot with subplots
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        row_heights=[0.75, 0.25]
+    )
+    
+    # Background context
+    fig.add_trace(go.Candlestick(
         x=context_data['open_time'],
         open=context_data['open'],
         high=context_data['high'],
         low=context_data['low'],
         close=context_data['close'],
-        name='Context Data',
+        name='Context',
         increasing_line_color='darkgreen',
         decreasing_line_color='darkred',
         opacity=0.3
-    ))
-
-    # Plot the cup with candlestick chart (highlighted)
-    plotly_fig.add_trace(go.Candlestick(
-        x=cup_candidate['open_time'],
-        open=cup_candidate['open'],
-        high=cup_candidate['high'],
-        low=cup_candidate['low'],
-        close=cup_candidate['close'],
-        name='Cup (Candlesticks)',
+    ), row=1, col=1)
+    
+    # Cup pattern (highlighted)
+    fig.add_trace(go.Candlestick(
+        x=cup_data['open_time'],
+        open=cup_data['open'],
+        high=cup_data['high'],
+        low=cup_data['low'],
+        close=cup_data['close'],
+        name='Cup',
         increasing_line_color='lime',
         decreasing_line_color='red'
-    ))
+    ), row=1, col=1)
     
-    # Plot the fitted parabola overlay
-    plotly_fig.add_trace(go.Scatter(x=cup_candidate['open_time'], y=fitted_parabola, mode='lines', name='Fitted Parabola (Cup)', line=dict(color='cyan', width=3, dash='dash')))
-
-    # Plot the handle with candlesticks (highlighted)
-    plotly_fig.add_trace(go.Candlestick(
-        x=handle_candidate['open_time'],
-        open=handle_candidate['open'],
-        high=handle_candidate['high'],
-        low=handle_candidate['low'],
-        close=handle_candidate['close'],
-        name='Handle (Candlesticks)',
+    # Handle pattern (highlighted)
+    fig.add_trace(go.Candlestick(
+        x=handle_data['open_time'],
+        open=handle_data['open'],
+        high=handle_data['high'],
+        low=handle_data['low'],
+        close=handle_data['close'],
+        name='Handle',
         increasing_line_color='yellow',
         decreasing_line_color='orange'
-    ))
-
-    # Add vertical lines to mark pattern boundaries
-    cup_start_time = cup_candidate.iloc[0]['open_time']
-    handle_end_time = handle_candidate.iloc[-1]['open_time']
+    ), row=1, col=1)
     
-    plotly_fig.add_vline(x=cup_start_time, line=dict(color='blue', width=2, dash='solid'), annotation_text="Cup Start")
-    plotly_fig.add_vline(x=handle_end_time, line=dict(color='purple', width=2, dash='solid'), annotation_text="Handle End")
+    # Post-handle data (20 candles after handle ends - shows breakout and post-breakout)
+    if not post_handle_data.empty:
+        fig.add_trace(go.Candlestick(
+            x=post_handle_data['open_time'],
+            open=post_handle_data['open'],
+            high=post_handle_data['high'],
+            low=post_handle_data['low'],
+            close=post_handle_data['close'],
+            name='Breakout Zone',
+            increasing_line_color='lightgreen',
+            decreasing_line_color='lightcoral'
+        ), row=1, col=1)
 
-    # If a breakout occurred, highlight the breakout zone
-    if breakout_time:
-        plotly_fig.add_vline(x=breakout_time, line=dict(color='red', width=3, dash='dot'), annotation_text="Breakout")
-
-    # Convert timestamps for title
+    # Parabolic fit for cup
+    if len(cup_pattern['parabola_params']) == 3:
+        x_norm = np.arange(len(cup_data)) / (len(cup_data) - 1)
+        y_data = cup_data['smooth_close'].values
+        y_min, y_max = y_data.min(), y_data.max()
+        y_range = y_max - y_min
+        
+        fitted_norm = parabola(x_norm, *cup_pattern['parabola_params'])
+        fitted = fitted_norm * y_range + y_min
+        
+        fig.add_trace(go.Scatter(
+            x=cup_data['open_time'],
+            y=fitted,
+            mode='lines',
+            name=f'Parabolic Fit',
+            line=dict(color='white', width=6, dash='solid')
+        ), row=1, col=1)
+    
+    # Pattern boundary markers
+    cup_start_time = cup_data.iloc[0]['open_time']
+    handle_start_time = handle_data.iloc[0]['open_time']
+    handle_end_time = handle_data.iloc[-1]['open_time']
+    
+    fig.add_vline(x=cup_start_time, line=dict(color='blue', width=2, dash='solid'))
+    fig.add_vline(x=handle_start_time, line=dict(color='purple', width=2, dash='solid'))
+    fig.add_vline(x=handle_end_time, line=dict(color='orange', width=2, dash='solid'))
+    
+    # Handle resistance line
+    handle_resistance = handle_pattern['handle_high']
+    fig.add_hline(y=handle_resistance, 
+                  line=dict(color='red', width=2, dash='dash'))
+    
+    # Volume analysis
+    combined_data = pd.concat([cup_data, handle_data])
+    if 'volume' in combined_data.columns:
+        fig.add_trace(go.Bar(
+            x=combined_data['open_time'],
+            y=combined_data['volume'],
+            name='Volume',
+            marker_color='gray',
+            opacity=0.6
+        ), row=2, col=1)
+    
+    # Layout and styling
     start_time_readable = pd.to_datetime(cup_start_time, unit='ms').strftime('%Y-%m-%d %H:%M')
     end_time_readable = pd.to_datetime(handle_end_time, unit='ms').strftime('%Y-%m-%d %H:%M')
-
-    # Calculate dynamic width based on pattern length
-    total_candles = len(cup_candidate) + len(handle_candidate)
-    context_candles = min(100, context_after + context_before)  # Context candles shown
-    total_displayed_candles = total_candles + context_candles
     
-    # Base width calculation: minimum 20px per candle, with reasonable bounds
-    min_width = 1200
-    max_width = 2400
-    calculated_width = max(min_width, min(max_width, total_displayed_candles * 20))
-    
-    # Set up layout for better visualization
-    plotly_fig.update_layout(
-        title=f"Pattern {pattern_id}: Cup and Handle ({len(cup_candidate)}+{len(handle_candidate)} candles)<br>Time: {start_time_readable} to {end_time_readable}",
-        xaxis_title="Time",
-        yaxis_title="Price",
-        showlegend=True,
+    fig.update_layout(
+        title=f"Cup & Handle Pattern #{pattern_id}<br>",
         template="plotly_dark",
-        width=calculated_width,
-        height=700,
-        xaxis=dict(
-            type='date',
-            tickformat='%H:%M',
-            dtick=60000,  # 1-minute intervals for better visibility
-            rangeslider=dict(visible=False),  # Hide range slider for cleaner look
-            fixedrange=False  # Allow zooming
+        width=1600,
+        height=900,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=1.01,
+            bgcolor="rgba(0,0,0,0.7)",
+            bordercolor="rgba(255,255,255,0.3)",
+            borderwidth=1
         )
     )
     
-    # Add spacing between candlesticks for better visibility
-    plotly_fig.update_traces(
-        selector=dict(type='candlestick'),
-        line=dict(width=1),  # Thinner candlestick lines
-    )
+    # Update axes
+    fig.update_xaxes(type='date', tickformat='%H:%M', rangeslider=dict(visible=False))
+    fig.update_yaxes(title_text="Price", row=1, col=1)
+    fig.update_yaxes(title_text="Volume", row=2, col=1)
     
-    # Adjust the layout to add more spacing (adaptive based on pattern length)
-    # Shorter patterns get more spacing, longer patterns get less to avoid over-stretching
-    if total_candles <= 40:
-        bargap_value = 0.3  # More spacing for short patterns
-    elif total_candles <= 80:
-        bargap_value = 0.2  # Medium spacing for medium patterns
-    else:
-        bargap_value = 0.1  # Less spacing for long patterns to keep them readable
-        
-    plotly_fig.update_layout(
-        bargap=bargap_value,  # Adaptive gap between candlesticks
-        bargroupgap=0.05  # Small gap between groups
-    )
-
-    # Save the plot as a PNG using Kaleido
-    # Create patterns directory if it doesn't exist
+    # Save plot
     os.makedirs("patterns", exist_ok=True)
-    
-    image_filename = f"cup_handle_{pattern_id}.png"
-    image_path = f"patterns/{image_filename}"
-    plotly_fig.write_image(image_path, scale=2)  # Scaling the image for better resolution
-    print(f"Pattern {pattern_id} plot saved as {image_path}")
-
-def plot_patterns(patterns, data):
-    """
-    Plot all detected patterns and save as PNG files
-    
-    Args:
-        patterns: List of detected patterns
-        data: Original dataset
-    """
-    # Plot each detected pattern
-    for idx, pattern in enumerate(patterns):
-        cup_start_idx = pattern['cup_start_idx']
-        cup_end_idx = pattern['cup_end_idx']
-        handle_start_idx = pattern['handle_start_idx'] 
-        handle_end_idx = pattern['handle_end_idx']
-        breakout_time = pattern.get('breakout_time', None)
-
-        # Extract cup and handle data based on indices
-        cup_candidate = data.iloc[cup_start_idx:cup_end_idx]
-        handle_candidate = data.iloc[handle_start_idx:handle_end_idx]
-        
-        # Plot and save each pattern with the given pattern_id
-        plot_and_crop_pattern(
-            cup_candidate, 
-            handle_candidate, 
-            breakout_time, 
-            idx + 1, 
-            data,  # Pass full dataset for context
-            cup_start_idx,  # Pattern start index
-            handle_end_idx  # Pattern end index
-        )
+    filename = f'patterns/cup_handle_{pattern_id}.png'
+    fig.write_image(filename, scale=2)
