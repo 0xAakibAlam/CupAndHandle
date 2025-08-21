@@ -116,7 +116,15 @@ def prepare_data_with_smoothing(data):
 
 def fit_enhanced_parabola(cup_data):
     """
-    Enhanced parabola fitting with multiple improvements for cup detection
+    Enhanced parabola fitting using advanced percentile-based weighting for cup detection.
+    
+    The parabola is fitted to enclose the candles using a sophisticated weighting strategy:
+    - Bottom 5% of values: Maximum weight (6.0x) - critical envelope points
+    - Next 20% minimum values: High weight (3.0x) - envelope constraint
+    - Top 5% of values: High weight (5.0x) - rim constraint points  
+    - Next 20% maximum values: Medium weight (2.5x) - rim shaping
+    - Middle values: Normal weight (1.0x)
+    - Special emphasis on absolute minimum point (8.0x) and neighbors (4.0x)
     
     Args:
         cup_data: DataFrame containing the cup candidate data
@@ -127,7 +135,7 @@ def fit_enhanced_parabola(cup_data):
     
     # Normalize x-data to [0, 1] for numerical stability
     x_data = np.arange(len(cup_data)) / (len(cup_data) - 1)
-    y_data = cup_data['smooth_close'].values
+    y_data = cup_data['close'].values
     
     # Normalize y-data
     y_min, y_max = y_data.min(), y_data.max()
@@ -153,18 +161,50 @@ def fit_enhanced_parabola(cup_data):
             # Bounds to ensure upward-facing parabola
             bounds = ([0.1, -np.inf, -np.inf], [np.inf, np.inf, np.inf])
             
-            # Weighted fitting - emphasize rim points and bottom
+            # Advanced percentile-based weighted fitting for envelope optimization
             weights = np.ones(len(x_data))
-            rim_size = max(2, len(x_data) // 10)
+            
+            # Percentile-based weighting across entire dataset
+            # Bottom 5% of values get maximum weight (envelope constraint points)
+            p5_threshold = np.percentile(y_normalized, 5)
+            p25_threshold = np.percentile(y_normalized, 25)
+            
+            # Top 5% of values get maximum weight (rim constraint points)
+            p95_threshold = np.percentile(y_normalized, 95)
+            p75_threshold = np.percentile(y_normalized, 75)
+            
+            # Apply percentile-based weights
+            for i in range(len(y_normalized)):
+                value = y_normalized[i]
+                
+                # Maximum weight for extreme values (envelope points)
+                if value <= p5_threshold:  # Bottom 5% - critical envelope points
+                    weights[i] *= 6.0
+                elif value <= p25_threshold:  # Next 20% of minimum values
+                    weights[i] *= 3.0
+                elif value >= p95_threshold:  # Top 5% - rim constraint points
+                    weights[i] *= 5.0
+                elif value >= p75_threshold:  # Next 20% of maximum values
+                    weights[i] *= 2.5
+                # else: normal weight (1.0) for middle values
+            
+            # Additional strategic weighting for cup shape
+            mid_point = len(x_data) // 2
+            
+            # Emphasize rim areas for proper envelope constraint
+            rim_size = max(2, len(x_data) // 12)
             weights[:rim_size] *= 2.0      # Left rim
             weights[-rim_size:] *= 2.0     # Right rim
             
-            # Emphasize bottom region
+            # Emphasize the absolute bottom point of the cup
             bottom_idx = np.argmin(y_normalized)
-            bottom_range = max(3, len(x_data) // 8)
-            bottom_start = max(0, bottom_idx - bottom_range // 2)
-            bottom_end = min(len(x_data), bottom_idx + bottom_range // 2)
-            weights[bottom_start:bottom_end] *= 1.5
+            weights[bottom_idx] *= 8.0  # Maximum emphasis on the deepest point
+            
+            # Slight emphasis on immediate neighbors of the bottom
+            if bottom_idx > 0:
+                weights[bottom_idx - 1] *= 4.0
+            if bottom_idx < len(weights) - 1:
+                weights[bottom_idx + 1] *= 4.0
             
             # Curve fitting
             popt, _ = curve_fit(
